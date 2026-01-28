@@ -1,0 +1,9 @@
+winget install Python.Python.3.12
+
+python --version
+
+setx PATH "%PATH%;C:\Users\MarkPeng\AppData\Local\Programs\Python\Python312;C:\Users\MarkPeng\AppData\Local\Programs\Python\Python312\Scripts"
+
+python -m pip install pythonnet
+
+python -c "import clr; print('clr OK')"
