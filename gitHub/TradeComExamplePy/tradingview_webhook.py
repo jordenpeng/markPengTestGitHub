@@ -20,7 +20,7 @@ executor = None
 executor_lock = threading.Lock()
 
 # 簡單的驗證密鑰（建議在環境變數中設置）
-WEBHOOK_SECRET = os.environ.get('WEBHOOK_SECRET', 'your-secret-key-12345')
+WEBHOOK_SECRET = os.getenv("TV_SECRET")
 
 # 安全設定：是否要求密鑰驗證
 # True = 必須提供正確的 secret（生產環境建議）
@@ -213,6 +213,12 @@ def long_position():
                     'error': '交易執行器未就緒'
                 }), 500
         
+        # 步驟1: 先平掉所有倉位
+        print("\n>>> 步驟1: 先平掉所有倉位...")
+        executor.close_all_positions()
+        
+        # 步驟2: 執行做多開倉
+        print("\n>>> 步驟2: 執行做多開倉...")
         result = executor.execute_golden_cross_signal(price)
         return jsonify({
             'success': result['success'],
@@ -272,6 +278,12 @@ def short_position():
                     'error': '交易執行器未就緒'
                 }), 500
         
+        # 步驟1: 先平掉所有倉位
+        print("\n>>> 步驟1: 先平掉所有倉位...")
+        executor.close_all_positions()
+        
+        # 步驟2: 執行做空開倉
+        print("\n>>> 步驟2: 執行做空開倉...")
         result = executor.execute_death_cross_signal(price)
         return jsonify({
             'success': result['success'],
