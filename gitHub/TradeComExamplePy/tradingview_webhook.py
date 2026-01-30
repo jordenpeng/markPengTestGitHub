@@ -214,8 +214,8 @@ def long_position():
                 }), 500
         
         # 步驟1: 先平掉所有倉位
-        print("\n>>> 步驟1: 先平掉所有倉位...")
-        executor.close_all_positions()
+        # print("\n>>> 步驟1: 先平掉所有倉位...")
+        # executor.close_all_positions()
         
         # 步驟2: 執行做多開倉
         print("\n>>> 步驟2: 執行做多開倉...")
@@ -279,8 +279,8 @@ def short_position():
                 }), 500
         
         # 步驟1: 先平掉所有倉位
-        print("\n>>> 步驟1: 先平掉所有倉位...")
-        executor.close_all_positions()
+        # print("\n>>> 步驟1: 先平掉所有倉位...")
+        # executor.close_all_positions()
         
         # 步驟2: 執行做空開倉
         print("\n>>> 步驟2: 執行做空開倉...")
