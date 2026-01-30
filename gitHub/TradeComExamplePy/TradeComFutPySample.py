@@ -856,25 +856,26 @@ class TradecomPyFut:
             i = 1
             for sub in pkg.p001616_2:
                 num = str(i)
-                res['BrokerId' + num] =  pkg.BrokerId
-                res['Account' + num] =  pkg.Account
-                res['Group' + num] =  pkg.Group
-                res['Trader' + num] =  pkg.Trader
-                res['Exchange' + num] =  pkg.Exchange
-                res['ComType' + num] =  pkg.ComType
-                res['ComID' + num] =  pkg.ComID
-                res['ComYM' + num] =  pkg.ComYM
-                res['StrikePrice' + num] =  pkg.StrikePrice
-                res['CloseDate' + num] =  pkg.CloseDate
-                res['CP' + num] =  pkg.CP
-                res['BS' + num] =  pkg.BS
-                res['DeliveryDate' + num] =  pkg.DeliveryDate
-                res['Currency' + num] =  pkg.Currency
-                res['OTQty' + num] =  pkg.OTQty
-                res['TrdPrice' + num] =  pkg.TrdPrice
-                res['MPrice' + num] =  pkg.MPrice
-                res['PRTLOS' + num] =  pkg.PRTLOS
-                res['DealPrice' + num] =  pkg.DealPrice
+                # 使用 getattr 安全地獲取屬性
+                res['BrokerId' + num] =  getattr(sub, 'BrokerId', '')
+                res['Account' + num] =  getattr(sub, 'Account', '')
+                res['Group' + num] =  getattr(sub, 'Group', '')
+                res['Trader' + num] =  getattr(sub, 'Trader', '')
+                res['Exchange' + num] =  getattr(sub, 'Exchange', '')
+                res['ComType' + num] =  getattr(sub, 'ComType', '')
+                res['ComID' + num] =  getattr(sub, 'ComID', '')
+                res['ComYM' + num] =  getattr(sub, 'ComYM', '')
+                res['StrikePrice' + num] =  getattr(sub, 'StrikePrice', '')
+                res['CloseDate' + num] =  getattr(sub, 'CloseDate', '')
+                res['CP' + num] =  getattr(sub, 'CP', '')
+                res['BS' + num] =  getattr(sub, 'BS', '')
+                res['DeliveryDate' + num] =  getattr(sub, 'DeliveryDate', '')
+                res['Currency' + num] =  getattr(sub, 'Currency', '')
+                res['OTQty' + num] =  getattr(sub, 'OTQty', 0)
+                res['TrdPrice' + num] =  getattr(sub, 'TrdPrice', 0)
+                res['MPrice' + num] =  getattr(sub, 'MPrice', 0)
+                res['PRTLOS' + num] =  getattr(sub, 'PRTLOS', 0)
+                res['DealPrice' + num] =  getattr(sub, 'DealPrice', 0)
                 i += 1
         self.callback(res)
         

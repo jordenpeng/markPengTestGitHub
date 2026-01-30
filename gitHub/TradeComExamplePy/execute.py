@@ -9,10 +9,12 @@ import sys
 import os
 from pathlib import Path
 from time import sleep
+from datetime import datetime
 
 # 導入 money 模組
 from money import FuturesTrader
 from trade_logger import TradeLogger
+import money_config as config
 
 
 class TradeExecutor:
@@ -61,22 +63,27 @@ class TradeExecutor:
         """
         print("\n>>> 檢查倉位中...")
         
-        # 查詢部位彙總
-        # 注意：這裡需要實際從交易系統取得倉位資訊
-        # 由於 money.py 的 query_position 是透過回調取得資料
-        # 我們需要等待回調並解析結果
+        # 查詢部位彙總並取得結果
+        position_data = self.trader.query_position()
         
-        # 暫時使用簡化版本，實際應用需要透過回調機制
-        self.trader.query_position()
-        sleep(2)  # 等待查詢結果
-        
-        # TODO: 這裡應該從回調中取得實際倉位資訊
-        # 目前先返回預設值，需要根據實際回調資料更新
+        # 初始化結果
         result = {
             'has_position': False,
             'position_side': None,
             'position_qty': 0
         }
+        
+        # 解析倉位資訊
+        if position_data['has_position'] and len(position_data['positions']) > 0:
+            # 取第一個倉位（通常只有一個商品）
+            first_position = position_data['positions'][0]
+            result['has_position'] = True
+            result['position_side'] = first_position['side']  # 'B' 或 'S'
+            result['position_qty'] = first_position['qty']
+        
+        # 更新快取
+        self.position_cache = result
+        self.position_cache['last_check_time'] = datetime.now()
         
         print(f">>> 倉位檢查結果: {'有倉位' if result['has_position'] else '無倉位'}")
         if result['has_position']:
@@ -90,7 +97,7 @@ class TradeExecutor:
         平掉所有倉位
         
         Args:
-            price: 平倉價格（可選）
+            price: 平倉價格（可選，不使用）
         
         Returns:
             bool: 是否執行成功
@@ -104,30 +111,43 @@ class TradeExecutor:
             print(">>> 目前無倉位，無需平倉")
             return True
         
-        # 根據倉位方向執行平倉
-        if position['position_side'] == 'B':
-            # 多單 → 賣出平倉
-            print(f">>> 執行賣出平倉 {position['position_qty']} 口")
-            result = self.trader.close_position(
-                side='S',
-                price_type='MR',
-                qty=position['position_qty']
-            )
-        else:
-            # 空單 → 買進平倉
-            print(f">>> 執行買進平倉 {position['position_qty']} 口")
-            result = self.trader.close_position(
-                side='B',
-                price_type='MR',
-                qty=position['position_qty']
-            )
+        # 取得倉位詳細資訊
+        position_data = self.trader.position_data
+        if not position_data['positions']:
+            print(">>> 無法取得倉位詳細資訊")
+            return False
         
-        if result:
-            print(">>> 平倉指令已發送成功")
-        else:
-            print(">>> 平倉指令發送失敗")
+        # 平掉所有倉位（使用 place_order 並設置 position_effect='C'）
+        all_success = True
+        for pos in position_data['positions']:
+            base_symbol = pos['symbol']  # 例如: TMF
+            side = pos['side']  # 'B' 或 'S'
+            qty = pos['qty']
+            
+            # 轉換成完整的期貨代碼（例如: TMF → TMFF3）
+            full_symbol = self.trader.trader.futSymbol(base_symbol, config.DEFAULT_MONTH)
+            
+            # 根據倉位方向執行平倉
+            # 多單(B) → 賣出(S)平倉
+            # 空單(S) → 買進(B)平倉
+            close_side = 'S' if side == 'B' else 'B'
+            
+            print(f">>> 執行平倉 {base_symbol} ({full_symbol}) {'多單' if side == 'B' else '空單'} {qty} 口")
+            result = self.trader.place_order(
+                symbol=full_symbol,  # ✅ 使用完整代碼
+                side=close_side,
+                price_type='MR',
+                qty=qty,
+                position_effect='C'  # ✅ 關鍵：設置為平倉
+            )
+            
+            if not result:
+                all_success = False
+                print(f">>> ✗ 平倉 {base_symbol} 失敗")
+            else:
+                print(f">>> ✓ 平倉 {base_symbol} 指令已發送")
         
-        return result
+        return all_success
     
     def execute_golden_cross_signal(self, price=None):
         """

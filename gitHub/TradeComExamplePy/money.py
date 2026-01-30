@@ -33,10 +33,16 @@ class FuturesTrader:
         self.order_history = []
         self.logger = logger
         
-        # 追蹤當前委託：用 RequestId 追蹤
+        # 追蹤當前委託
         self.pending_orders = {}  # {RequestId: {'side': 'B'/'S', 'position_effect': 'O'/'C', 'qty': int}}
         self.order_no_map = {}  # {OrderNo: RequestId} 用於成交回報時查找
-        self.request_id_counter = 0
+        self.last_order_info = None  # 暫存最後一筆下單資訊
+        
+        # 倉位資訊
+        self.position_data = {
+            'has_position': False,
+            'positions': []  # 儲存所有倉位
+        }
         
         print("=" * 60)
         print("期貨交易系統啟動中...")
@@ -80,8 +86,16 @@ class FuturesTrader:
                 # 建立 OrderNo 到 RequestId 的映射
                 if request_id and order_no:
                     self.order_no_map[order_no] = request_id
+                    
+                    # 如果有暫存的下單資訊，建立 pending_orders
+                    if self.last_order_info:
+                        self.pending_orders[request_id] = self.last_order_info
+                        if config.DEBUG_MODE:
+                            print(f"[DEBUG] 已建立 pending_order: {request_id} -> {self.last_order_info}")
+                        self.last_order_info = None
             else:
                 print(f"  狀態: ✗ 下單失敗 - {data.get('ErrorMsg')}")
+                self.last_order_info = None
         
         # 委託回報
         elif dt == 'PT02010' and config.SHOW_ORDER_REPORT:
@@ -94,43 +108,72 @@ class FuturesTrader:
             print(f"  回報時間: {data.get('ReportTime')}")
         
         # 成交回報
-        elif dt == 'PT02011' and config.SHOW_DEAL_REPORT:
+        elif dt == 'PT02011':
             order_no = data.get('OrderNo')
             deal_price = data.get('DealPrice')
             deal_qty = data.get('DealQty')
             side = data.get('Side')
             
-            print(f"\n成交回報:")
-            print(f"  委託書號: {order_no}")
-            print(f"  商品代碼: {data.get('Symbol')}")
-            print(f"  買賣別: {'買進' if side == 'B' else '賣出'}")
-            print(f"  成交價: {deal_price}")
-            print(f"  成交量: {deal_qty}")
-            print(f"  累計成交: {data.get('CumQty')}")
-            print(f"  回報時間: {data.get('ReportTime')}")
+            # 顯示成交回報（可選）
+            if config.SHOW_DEAL_REPORT:
+                print(f"\n成交回報:")
+                print(f"  委託書號: {order_no}")
+                print(f"  商品代碼: {data.get('Symbol')}")
+                print(f"  買賣別: {'買進' if side == 'B' else '賣出'}")
+                print(f"  成交價: {deal_price}")
+                print(f"  成交量: {deal_qty}")
+                print(f"  累計成交: {data.get('CumQty')}")
+                print(f"  回報時間: {data.get('ReportTime')}")
             
-            # 記錄到交易日誌
-            if self.logger and order_no in self.order_no_map:
-                request_id = self.order_no_map[order_no]
-                if request_id in self.pending_orders:
-                    order_info = self.pending_orders[request_id]
-                    position_effect = order_info.get('position_effect')
+            # 記錄到交易日誌（不受 SHOW_DEAL_REPORT 影響）
+            if self.logger:
+                if config.DEBUG_MODE:
+                    print(f"[DEBUG] 檢查日誌記錄: order_no={order_no}")
+                    print(f"[DEBUG] order_no_map keys: {list(self.order_no_map.keys())}")
+                
+                if order_no in self.order_no_map:
+                    request_id = self.order_no_map[order_no]
                     
-                    # 開倉記錄
-                    if position_effect in ['O', 'A']:  # 新倉或自動
-                        if side == 'B':
-                            self.logger.open_long(deal_price, deal_qty)
-                        elif side == 'S':
-                            self.logger.open_short(deal_price, deal_qty)
+                    if config.DEBUG_MODE:
+                        print(f"[DEBUG] 找到 request_id: {request_id}")
+                        print(f"[DEBUG] pending_orders keys: {list(self.pending_orders.keys())}")
                     
-                    # 平倉記錄
-                    elif position_effect == 'C':
-                        if self.logger.current_position:
-                            self.logger.close_position(deal_price, deal_qty)
-                    
-                    # 移除已處理的委託
-                    del self.pending_orders[request_id]
-                    del self.order_no_map[order_no]
+                    if request_id in self.pending_orders:
+                        order_info = self.pending_orders[request_id]
+                        position_effect = order_info.get('position_effect')
+                        
+                        if config.DEBUG_MODE:
+                            print(f"[DEBUG] position_effect: {position_effect}, side: {side}")
+                        
+                        # 開倉記錄
+                        if position_effect in ['O', 'A']:  # 新倉或自動
+                            if side == 'B':
+                                self.logger.open_long(deal_price, deal_qty)
+                                print(f"[日誌] 已記錄做多開倉")
+                            elif side == 'S':
+                                self.logger.open_short(deal_price, deal_qty)
+                                print(f"[日誌] 已記錄做空開倉")
+                        
+                        # 平倉記錄
+                        elif position_effect == 'C':
+                            if self.logger.current_position:
+                                self.logger.close_position(deal_price, deal_qty)
+                                print(f"[日誌] 已記錄平倉")
+                            else:
+                                print(f"[日誌] ⚠️ 無持倉，無法記錄平倉")
+                        
+                        # 移除已處理的委託
+                        del self.pending_orders[request_id]
+                        del self.order_no_map[order_no]
+                    else:
+                        if config.DEBUG_MODE:
+                            print(f"[DEBUG] request_id 不在 pending_orders 中")
+                else:
+                    if config.DEBUG_MODE:
+                        print(f"[DEBUG] order_no 不在 order_no_map 中")
+            else:
+                if config.DEBUG_MODE:
+                    print(f"[DEBUG] logger 未初始化")
         
         # 權益數查詢
         elif dt == 'P001626':
@@ -152,17 +195,34 @@ class FuturesTrader:
         
         # 部位彙總
         elif dt == 'P001616':
-            if data.get('Rows', 0) > 0:
+            rows = data.get('Rows', 0)
+            
+            # 清空並更新倉位資訊
+            self.position_data['positions'] = []
+            
+            if rows > 0:
                 print(f"\n部位彙總查詢結果:")
-                for i in range(1, data.get('Rows', 0) + 1):
+                for i in range(1, rows + 1):
+                    position = {
+                        'symbol': data.get(f'ComID{i}', 'N/A'),
+                        'side': data.get(f'BS{i}', 'N/A'),  # 'B' 或 'S'
+                        'qty': int(data.get(f'OTQty{i}', 0)),
+                        'avg_price': float(data.get(f'TrdPrice{i}', 0)),
+                        'pnl': float(data.get(f'PRTLOS{i}', 0))
+                    }
+                    self.position_data['positions'].append(position)
+                    
                     print(f"  部位 {i}:")
-                    print(f"    商品: {data.get(f'ComID{i}', 'N/A')}")
-                    print(f"    買賣別: {data.get(f'BS{i}', 'N/A')}")
-                    print(f"    數量: {data.get(f'OTQty{i}', 'N/A')}")
-                    print(f"    均價: {data.get(f'TrdPrice{i}', 'N/A')}")
-                    print(f"    損益: {data.get(f'PRTLOS{i}', 'N/A')}")
+                    print(f"    商品: {position['symbol']}")
+                    print(f"    買賣別: {'多單' if position['side'] == 'B' else '空單'}")
+                    print(f"    數量: {position['qty']}")
+                    print(f"    均價: {position['avg_price']}")
+                    print(f"    損益: {position['pnl']}")
+                
+                self.position_data['has_position'] = True
             else:
                 print(f"\n目前無持倉部位")
+                self.position_data['has_position'] = False
         
         # 狀態訊息
         elif dt == 'STATUS':
@@ -275,12 +335,8 @@ class FuturesTrader:
         else:
             print("\n>> 自動送出下單...")
         
-        # 生成 RequestId
-        self.request_id_counter += 1
-        request_id = f"REQ{self.request_id_counter:06d}"
-        
-        # 記錄待處理委託
-        self.pending_orders[request_id] = {
+        # 暫存下單資訊（等待 PT02002 回應時建立映射）
+        self.last_order_info = {
             'side': side,
             'position_effect': position_effect,
             'qty': qty
@@ -313,14 +369,12 @@ class FuturesTrader:
                 'symbol': symbol,
                 'side': side,
                 'qty': qty,
-                'price': price,
-                'request_id': request_id
+                'price': price
             })
-            print(f"\n✓ 下單請求已送出 (RequestId: {request_id})")
+            print(f"\n✓ 下單請求已送出")
         else:
-            # 下單失敗，移除記錄
-            if request_id in self.pending_orders:
-                del self.pending_orders[request_id]
+            # 下單失敗，清除暫存
+            self.last_order_info = None
         
         return result
     
@@ -399,12 +453,8 @@ class FuturesTrader:
         else:
             print("\n>> 自動送出平倉...")
         
-        # 生成 RequestId
-        self.request_id_counter += 1
-        request_id = f"REQ{self.request_id_counter:06d}"
-        
-        # 記錄待處理委託
-        self.pending_orders[request_id] = {
+        # 暫存下單資訊（等待 PT02002 回應時建立映射）
+        self.last_order_info = {
             'side': side,
             'position_effect': 'C',  # 平倉
             'qty': qty
@@ -435,14 +485,12 @@ class FuturesTrader:
                 'side': side,
                 'qty': qty,
                 'price': price,
-                'type': '平倉',
-                'request_id': request_id
+                'type': '平倉'
             })
-            print(f"\n✓ 平倉請求已送出 (RequestId: {request_id})")
+            print(f"\n✓ 平倉請求已送出")
         else:
-            # 下單失敗，移除記錄
-            if request_id in self.pending_orders:
-                del self.pending_orders[request_id]
+            # 下單失敗，清除暫存
+            self.last_order_info = None
         
         return result
     
@@ -489,20 +537,28 @@ class FuturesTrader:
         return result
     
     def query_position(self):
-        """查詢部位彙總"""
+        """
+        查詢部位彙總
+        
+        Returns:
+            dict: 倉位資訊 {'has_position': bool, 'positions': list}
+        """
         if not self.is_logged_in:
             print("✗ 請先登入")
-            return
+            return {'has_position': False, 'positions': []}
         
         print("\n查詢部位彙總...")
         trader = getattr(config, 'TRADER', '')
         result = self.trader.posSum('I', config.BROKER_ID, config.ACCOUNT, trader)
+        
         if result == 0:
-            sleep(1)  # 等待回應
+            sleep(2)  # 等待回應
+            return self.position_data
         else:
             print(f"✗ 查詢失敗 (錯誤碼: {result})")
             if result == -1:
                 print("  可能原因: 非合法帳號/Trader")
+            return {'has_position': False, 'positions': []}
     
     def query_position_detail(self):
         """查詢部位明細"""

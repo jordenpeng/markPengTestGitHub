@@ -357,6 +357,67 @@ def close_position():
         }), 500
 
 
+@app.route('/position', methods=['GET', 'POST'])
+def check_position():
+    """
+    檢查倉位接口
+    
+    GET 或 POST 都可以
+    可選參數:
+    {
+        "secret": "your-secret-key"
+    }
+    """
+    try:
+        # 處理 POST 請求的驗證
+        if request.method == 'POST':
+            data = request.get_json(silent=True) or {}
+            
+            # 安全驗證：檢查密鑰
+            if REQUIRE_SECRET:
+                provided_secret = data.get('secret', '')
+                if provided_secret != WEBHOOK_SECRET:
+                    print(f"⚠️ 未授權的請求（密鑰不正確）")
+                    return jsonify({'error': '未授權：密鑰錯誤或未提供'}), 401
+        
+        print("\n" + "=" * 70)
+        print(f"📊 接收到倉位查詢請求")
+        print(f"   時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("=" * 70)
+        
+        if executor is None or not executor.trader.is_logged_in:
+            if not init_trader():
+                return jsonify({
+                    'success': False,
+                    'error': '交易執行器未就緒'
+                }), 500
+        
+        # 查詢倉位
+        position_info = executor.check_position()
+        
+        print(f"\n>>> 倉位查詢結果:")
+        print(f"    has_position: {position_info.get('has_position')}")
+        print(f"    position_side: {position_info.get('position_side')}")
+        print(f"    position_qty: {position_info.get('position_qty')}")
+        
+        return jsonify({
+            'success': True,
+            'has_position': position_info.get('has_position', False),
+            'position_side': position_info.get('position_side'),
+            'position_qty': position_info.get('position_qty', 0),
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        print(f"\n✗ 查詢倉位時發生錯誤: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 def run_server(host='0.0.0.0', port=5000, debug=False):
     """
     啟動 Flask 伺服器
@@ -381,6 +442,7 @@ def run_server(host='0.0.0.0', port=5000, debug=False):
     print(f"\n📍 可用端點:")
     print(f"  健康檢查: GET  http://{host}:{port}/health")
     print(f"  倉位查詢: GET  http://{host}:{port}/position")
+    print(f"  檢查倉位: POST http://{host}:{port}/position")
     print(f"  做多交易: POST http://{host}:{port}/long")
     print(f"  做空交易: POST http://{host}:{port}/short")
     print(f"  平倉操作: POST http://{host}:{port}/close")
