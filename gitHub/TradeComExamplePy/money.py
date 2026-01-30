@@ -21,12 +21,22 @@ from TradeComFutPySample import TradecomPyFut
 class FuturesTrader:
     """期貨交易系統主類別"""
     
-    def __init__(self):
-        """初始化交易系統"""
+    def __init__(self, logger=None):
+        """初始化交易系統
+        
+        Args:
+            logger: TradeLogger實例，用於記錄交易日誌
+        """
         self.trader = None
         self.is_logged_in = False
         self.daily_order_count = 0
         self.order_history = []
+        self.logger = logger
+        
+        # 追蹤當前委託：用 RequestId 追蹤
+        self.pending_orders = {}  # {RequestId: {'side': 'B'/'S', 'position_effect': 'O'/'C', 'qty': int}}
+        self.order_no_map = {}  # {OrderNo: RequestId} 用於成交回報時查找
+        self.request_id_counter = 0
         
         print("=" * 60)
         print("期貨交易系統啟動中...")
@@ -59,11 +69,17 @@ class FuturesTrader:
         
         # 下單回應
         elif dt == 'PT02002':
+            request_id = data.get('RequestId')
+            order_no = data.get('OrderNo')
+            
             print(f"\n下單回應:")
-            print(f"  RequestId: {data.get('RequestId')}")
-            print(f"  委託書號: {data.get('OrderNo')}")
+            print(f"  RequestId: {request_id}")
+            print(f"  委託書號: {order_no}")
             if data.get('ErrorCode') == 0:
                 print(f"  狀態: ✓ 下單成功")
+                # 建立 OrderNo 到 RequestId 的映射
+                if request_id and order_no:
+                    self.order_no_map[order_no] = request_id
             else:
                 print(f"  狀態: ✗ 下單失敗 - {data.get('ErrorMsg')}")
         
@@ -79,14 +95,42 @@ class FuturesTrader:
         
         # 成交回報
         elif dt == 'PT02011' and config.SHOW_DEAL_REPORT:
+            order_no = data.get('OrderNo')
+            deal_price = data.get('DealPrice')
+            deal_qty = data.get('DealQty')
+            side = data.get('Side')
+            
             print(f"\n成交回報:")
-            print(f"  委託書號: {data.get('OrderNo')}")
+            print(f"  委託書號: {order_no}")
             print(f"  商品代碼: {data.get('Symbol')}")
-            print(f"  買賣別: {'買進' if data.get('Side') == 'B' else '賣出'}")
-            print(f"  成交價: {data.get('DealPrice')}")
-            print(f"  成交量: {data.get('DealQty')}")
+            print(f"  買賣別: {'買進' if side == 'B' else '賣出'}")
+            print(f"  成交價: {deal_price}")
+            print(f"  成交量: {deal_qty}")
             print(f"  累計成交: {data.get('CumQty')}")
             print(f"  回報時間: {data.get('ReportTime')}")
+            
+            # 記錄到交易日誌
+            if self.logger and order_no in self.order_no_map:
+                request_id = self.order_no_map[order_no]
+                if request_id in self.pending_orders:
+                    order_info = self.pending_orders[request_id]
+                    position_effect = order_info.get('position_effect')
+                    
+                    # 開倉記錄
+                    if position_effect in ['O', 'A']:  # 新倉或自動
+                        if side == 'B':
+                            self.logger.open_long(deal_price, deal_qty)
+                        elif side == 'S':
+                            self.logger.open_short(deal_price, deal_qty)
+                    
+                    # 平倉記錄
+                    elif position_effect == 'C':
+                        if self.logger.current_position:
+                            self.logger.close_position(deal_price, deal_qty)
+                    
+                    # 移除已處理的委託
+                    del self.pending_orders[request_id]
+                    del self.order_no_map[order_no]
         
         # 權益數查詢
         elif dt == 'P001626':
@@ -160,7 +204,7 @@ class FuturesTrader:
         Args:
             symbol: 商品代碼 (預設使用設定檔)
             side: 'B'=買進, 'S'=賣出
-            price_type: 'SP'=限價, 'M'=市價
+            price_type: 'SP'=限價, 'M'=市價, 'MR'=範圍市價, 'SM'=停損市價, 'SS'=停損限價
             price: 委託價格
             qty: 委託口數
             tif: 'R'=ROD, 'I'=IOC, 'F'=FOK
@@ -188,11 +232,11 @@ class FuturesTrader:
         if position_effect is None:
             position_effect = config.DEFAULT_POSITION_EFFECT
         
-        # ⚠️ 重要：市價單不允許 ROD，必須使用 IOC 或 FOK
-        if price_type == 'M' and tif == 'R':
+        # ⚠️ 重要：市價單和範圍市價單不允許 ROD，必須使用 IOC 或 FOK
+        if price_type in ['M', 'MR'] and tif == 'R':
             tif = 'I'  # 市價單自動改為 IOC
             if config.DEBUG_MODE:
-                print("[提示] 市價單不允許 ROD，已自動改為 IOC")
+                print(f"[提示] {price_type}單不允許 ROD，已自動改為 IOC")
         
         # 風險檢查
         if qty > config.MAX_ORDER_QTY:
@@ -204,11 +248,19 @@ class FuturesTrader:
             return False
         
         # 顯示下單資訊
+        price_type_text = {
+            'SP': '限價',
+            'M': '市價',
+            'MR': '範圍市價',
+            'SM': '停損市價',
+            'SS': '停損限價'
+        }.get(price_type, price_type)
+        
         print(f"\n準備下單:")
         print(f"  商品代碼: {symbol}")
         print(f"  買賣別: {'買進' if side == 'B' else '賣出'}")
-        print(f"  價格類型: {'限價' if price_type == 'SP' else '市價'}")
-        print(f"  委託價格: {price if price_type == 'SP' else '市價'}")
+        print(f"  價格類型: {price_type_text}")
+        print(f"  委託價格: {price if price_type == 'SP' else price_type_text}")
         print(f"  委託口數: {qty}")
         print(f"  有效期限: {'ROD' if tif == 'R' else ('IOC' if tif == 'I' else 'FOK')}")
         print(f"  倉位類型: {position_effect}")
@@ -223,6 +275,17 @@ class FuturesTrader:
         else:
             print("\n>> 自動送出下單...")
         
+        # 生成 RequestId
+        self.request_id_counter += 1
+        request_id = f"REQ{self.request_id_counter:06d}"
+        
+        # 記錄待處理委託
+        self.pending_orders[request_id] = {
+            'side': side,
+            'position_effect': position_effect,
+            'qty': qty
+        }
+        
         # 執行下單
         # 根據 TradeStart.py 範例：ORDER,O,F,F004000,9804474,TXFF3,B,SP,16500,F,1,A,AS
         # 參數順序（12個）：type, market, brokerId, account, symbolId, bs, pricefl, price, tif, qty, pf, off
@@ -235,7 +298,7 @@ class FuturesTrader:
             config.ACCOUNT,     # 4. account: 帳號
             symbol,     # 5. symbolId: 商品代碼
             side,       # 6. bs: B=買, S=賣
-            price_type, # 7. pricefl: SP=限價, M=市價
+            price_type, # 7. pricefl: SP=限價, MR=範圍市價
             price,      # 8. price: 價格
             tif,        # 9. tif: R=ROD, I=IOC, F=FOK
             qty,        # 10. qty: 數量
@@ -250,19 +313,24 @@ class FuturesTrader:
                 'symbol': symbol,
                 'side': side,
                 'qty': qty,
-                'price': price
+                'price': price,
+                'request_id': request_id
             })
-            print(f"\n✓ 下單請求已送出")
+            print(f"\n✓ 下單請求已送出 (RequestId: {request_id})")
+        else:
+            # 下單失敗，移除記錄
+            if request_id in self.pending_orders:
+                del self.pending_orders[request_id]
         
         return result
     
-    def close_position(self, side='B', price_type='M', price=0, qty=1, symbol=None):
+    def close_position(self, side='B', price_type='MR', price=0, qty=1, symbol=None):
         """
         平倉功能
         
         Args:
             side: 'B'=買進平倉(平空單), 'S'=賣出平倉(平多單)
-            price_type: 'SP'=限價, 'M'=市價
+            price_type: 'SP'=限價, 'M'=市價, 'MR'=範圍市價
             price: 委託價格 (市價時可為0)
             qty: 平倉口數
             symbol: 商品代碼 (預設使用設定檔)
@@ -288,11 +356,11 @@ class FuturesTrader:
         # 確定委託價格類型和有效期限
         tif = config.DEFAULT_TIME_IN_FORCE
         
-        # ⚠️ 重要：市價單不允許 ROD，必須使用 IOC 或 FOK
-        if price_type == 'M' and tif == 'R':
+        # ⚠️ 重要：市價單和範圍市價單不允許 ROD，必須使用 IOC 或 FOK
+        if price_type in ['M', 'MR'] and tif == 'R':
             tif = 'I'  # 市價單自動改為 IOC
             if config.DEBUG_MODE:
-                print("[提示] 市價單不允許 ROD，已自動改為 IOC")
+                print(f"[提示] {price_type}單不允許 ROD，已自動改為 IOC")
         
         # 風險檢查
         if qty > config.MAX_ORDER_QTY:
@@ -304,11 +372,19 @@ class FuturesTrader:
             return False
         
         # 顯示平倉資訊
+        price_type_text = {
+            'SP': '限價',
+            'M': '市價',
+            'MR': '範圍市價',
+            'SM': '停損市價',
+            'SS': '停損限價'
+        }.get(price_type, price_type)
+        
         print(f"\n準備平倉:")
         print(f"  商品代碼: {symbol}")
         print(f"  買賣別: {'買進平倉(平空單)' if side == 'B' else '賣出平倉(平多單)'}")
-        print(f"  價格類型: {'限價' if price_type == 'SP' else '市價'}")
-        print(f"  委託價格: {price if price_type == 'SP' else '市價'}")
+        print(f"  價格類型: {price_type_text}")
+        print(f"  委託價格: {price if price_type == 'SP' else price_type_text}")
         print(f"  平倉口數: {qty}")
         print(f"  有效期限: {'ROD' if tif == 'R' else ('IOC' if tif == 'I' else 'FOK')}")
         print(f"  倉位類型: C (平倉)")
@@ -322,6 +398,17 @@ class FuturesTrader:
                 return False
         else:
             print("\n>> 自動送出平倉...")
+        
+        # 生成 RequestId
+        self.request_id_counter += 1
+        request_id = f"REQ{self.request_id_counter:06d}"
+        
+        # 記錄待處理委託
+        self.pending_orders[request_id] = {
+            'side': side,
+            'position_effect': 'C',  # 平倉
+            'qty': qty
+        }
         
         # 執行平倉
         # 根據 TradeStart.py 範例使用位置參數
@@ -348,9 +435,14 @@ class FuturesTrader:
                 'side': side,
                 'qty': qty,
                 'price': price,
-                'type': '平倉'
+                'type': '平倉',
+                'request_id': request_id
             })
-            print(f"\n✓ 平倉請求已送出")
+            print(f"\n✓ 平倉請求已送出 (RequestId: {request_id})")
+        else:
+            # 下單失敗，移除記錄
+            if request_id in self.pending_orders:
+                del self.pending_orders[request_id]
         
         return result
     

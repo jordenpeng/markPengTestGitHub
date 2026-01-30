@@ -151,7 +151,7 @@ def execute_trade_signal(action, price=None, qty=1):
             
         elif action == 'close' or action == 'exit':
             # 平掉所有倉位
-            success = executor.close_all_positions()
+            success = executor.close_all_positions(price)
             return {
                 'success': success,
                 'action': 'close',
@@ -309,6 +309,7 @@ def close_position():
     
     可選參數:
     {
+        "price": 23000.0,
         "secret": "your-secret-key"
     }
     """
@@ -323,9 +324,13 @@ def close_position():
                 print(f"⚠️ 未授權的請求（密鑰不正確）")
                 return jsonify({'error': '未授權：密鑰錯誤或未提供'}), 401
         
+        price = data.get('price')
+        
         print("\n" + "=" * 70)
         print(f"⏹️ 接收到平倉訊號")
         print(f"   時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        if price:
+            print(f"   平倉價格: {price}")
         print("=" * 70)
         
         if executor is None or not executor.trader.is_logged_in:
@@ -335,7 +340,7 @@ def close_position():
                     'error': '交易執行器未就緒'
                 }), 500
         
-        success = executor.close_all_positions()
+        success = executor.close_all_positions(price)
         return jsonify({
             'success': success,
             'action': 'close',

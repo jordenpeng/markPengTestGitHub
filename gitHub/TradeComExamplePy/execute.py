@@ -12,6 +12,7 @@ from time import sleep
 
 # 導入 money 模組
 from money import FuturesTrader
+from trade_logger import TradeLogger
 
 
 class TradeExecutor:
@@ -23,8 +24,11 @@ class TradeExecutor:
         print("交易發送執行器啟動中...")
         print("=" * 70)
         
-        # 建立交易者實例
-        self.trader = FuturesTrader()
+        # 初始化交易日誌記錄器
+        self.logger = TradeLogger(log_dir="logs")
+        
+        # 建立交易者實例，並傳入logger
+        self.trader = FuturesTrader(logger=self.logger)
         
         # 登入交易系統
         print("\n>>> 正在登入交易系統...")
@@ -81,9 +85,12 @@ class TradeExecutor:
         
         return result
     
-    def close_all_positions(self):
+    def close_all_positions(self, price=None):
         """
         平掉所有倉位
+        
+        Args:
+            price: 平倉價格（可選）
         
         Returns:
             bool: 是否執行成功
@@ -103,7 +110,7 @@ class TradeExecutor:
             print(f">>> 執行賣出平倉 {position['position_qty']} 口")
             result = self.trader.close_position(
                 side='S',
-                price_type='M',
+                price_type='MR',
                 qty=position['position_qty']
             )
         else:
@@ -111,7 +118,7 @@ class TradeExecutor:
             print(f">>> 執行買進平倉 {position['position_qty']} 口")
             result = self.trader.close_position(
                 side='B',
-                price_type='M',
+                price_type='MR',
                 qty=position['position_qty']
             )
         
@@ -161,11 +168,11 @@ class TradeExecutor:
                 })
                 sleep(1)  # 等待平倉完成
         
-        # 步驟3: 執行市價買入1口
-        print(f">>> 執行市價買入 1 口")
+        # 步驟3: 執行範圍市價買入1口
+        print(f">>> 執行範圍市價買入 1 口")
         buy_result = self.trader.place_order(
             side='B',
-            price_type='M',
+            price_type='MR',
             qty=1
         )
         
@@ -229,11 +236,11 @@ class TradeExecutor:
                 })
                 sleep(1)  # 等待平倉完成
         
-        # 步驟3: 執行市價賣出1口
-        print(f">>> 執行市價賣出 1 口")
+        # 步驟3: 執行範圍市價賣出1口
+        print(f">>> 執行範圍市價賣出 1 口")
         sell_result = self.trader.place_order(
             side='S',
-            price_type='M',
+            price_type='MR',
             qty=1
         )
         
