@@ -79,7 +79,7 @@ def webhook():
             return jsonify({'error': '未授權'}), 401
         
         # 解析交易訊號
-        action = data.get('action', '').lower()
+        action = data.get('side', '').lower()
         qty = data.get('qty', 1)
         price = data.get('price')
         
@@ -91,7 +91,6 @@ def webhook():
         print(f"   數量: {qty}")
         if price:
             print(f"   參考價格: {price}")
-        print("=" * 70)
         
         # 確保交易執行器已初始化
         if executor is None or not executor.trader.is_logged_in:
@@ -100,7 +99,7 @@ def webhook():
                     'success': False,
                     'error': '交易執行器未就緒'
                 }), 500
-        
+      
         # 執行交易指令
         result = execute_trade_signal(action, price, qty)
         
@@ -128,6 +127,7 @@ def execute_trade_signal(action, price=None, qty=1):
     Returns:
         dict: 執行結果
     """
+    
     try:
         if action == 'buy' or action == 'long':
             # 執行買入訊號（類似黃金交叉）
