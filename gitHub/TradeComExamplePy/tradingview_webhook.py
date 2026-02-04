@@ -5,6 +5,17 @@ TradingView Webhook 接收服務
 接收 TradingView 發送的交易訊號並執行期貨交易
 """
 
+import sys
+import io
+
+# 修正 Windows 中文環境的編碼問題
+if sys.platform == 'win32':
+    # 設置標準輸出使用 UTF-8 編碼
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    if sys.stderr.encoding != 'utf-8':
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 from flask import Flask, request, jsonify
 from datetime import datetime
 import threading
@@ -431,11 +442,14 @@ def run_server(host='0.0.0.0', port=5000, debug=False):
     print("🚀 TradingView Webhook 服務啟動中...")
     print("=" * 70)
     
-    # 初始化交易執行器
+    # 初始化交易執行器（允許失敗，稍後重試）
     print("\n>>> 正在初始化交易執行器...")
     if not init_trader():
-        print("✗ 無法啟動服務：交易執行器初始化失敗")
-        return
+        print("⚠️  交易執行器初始化失敗")
+        print("⚠️  服務將繼續運行，但交易功能暫時不可用")
+        print("⚠️  請求到來時會嘗試重新初始化")
+    else:
+        print(f"\n✓ 交易執行器已就緒!")
     
     print(f"\n✓ 服務已就緒!")
     print(f"  監聽地址: http://{host}:{port}")

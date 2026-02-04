@@ -113,6 +113,9 @@ class WebhookManager:
             return False
         
         try:
+            # 創建日誌文件路徑
+            webhook_log = SCRIPT_DIR / "webhook_service.log"
+            
             # 啟動新進程
             cmd = [
                 sys.executable,
@@ -120,6 +123,13 @@ class WebhookManager:
                 "--host", WEBHOOK_HOST,
                 "--port", str(WEBHOOK_PORT)
             ]
+            
+            # 打開日誌文件
+            log_file = open(webhook_log, 'a', encoding='utf-8')
+            log_file.write(f"\n{'='*70}\n")
+            log_file.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 啟動 Webhook 服務\n")
+            log_file.write(f"{'='*70}\n")
+            log_file.flush()
             
             # Windows 上使用特殊標誌在背景運行
             if sys.platform == 'win32':
@@ -130,8 +140,8 @@ class WebhookManager:
                 self.webhook_process = subprocess.Popen(
                     cmd,
                     cwd=str(SCRIPT_DIR),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
                     creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
                 )
             else:
@@ -139,13 +149,14 @@ class WebhookManager:
                 self.webhook_process = subprocess.Popen(
                     cmd,
                     cwd=str(SCRIPT_DIR),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
                     start_new_session=True
                 )
             
             self.log(f"✓ 服務進程已啟動 (PID: {self.webhook_process.pid})")
             self.log(f"  監聽地址: http://{WEBHOOK_HOST}:{WEBHOOK_PORT}")
+            self.log(f"  日誌文件: {webhook_log}")
             
             # 等待並檢查進程
             time.sleep(5)
@@ -169,8 +180,20 @@ class WebhookManager:
                 except:
                     pass
             
-            self.log("⚠️  無法確認服務狀態", "WARNING")
-            return True  # 假設成功，讓服務自行運行
+            # 進程已退出，讀取日誌查看錯誤
+            try:
+                log_file.close()
+                with open(webhook_log, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    if len(lines) > 0:
+                        self.log("服務啟動失敗，最後幾行日誌:", "ERROR")
+                        for line in lines[-10:]:  # 顯示最後10行
+                            self.log(f"  {line.rstrip()}", "ERROR")
+            except:
+                pass
+            
+            self.log("✗ 服務進程已退出", "ERROR")
+            return False
                 
         except Exception as e:
             self.log(f"啟動服務時發生錯誤: {e}", "ERROR")
@@ -205,7 +228,7 @@ class WebhookManager:
         
         self.log("=" * 70)
     
-    def run_scheduler(self):
+    def run_scheduler(self, start_service_now=True):
         """運行定時調度器"""
         import schedule  # 確保 schedule 已導入
         
@@ -214,6 +237,20 @@ class WebhookManager:
         self.log(f"每日重啟時間: {RESTART_TIME}")
         self.log(f"當前時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.log("=" * 70)
+        
+        # 啟動時先確保服務正在運行
+        if start_service_now:
+            self.log("\n>>> 檢查 Webhook 服務狀態...")
+            processes = self.find_webhook_processes()
+            if not processes:
+                self.log(">>> Webhook 服務未運行，正在啟動...")
+                if self.start_webhook_service():
+                    self.log("✓ Webhook 服務已啟動")
+                else:
+                    self.log("✗ Webhook 服務啟動失敗", "ERROR")
+            else:
+                self.log(f"✓ Webhook 服務已在運行 (PID: {[p.pid for p in processes]})")
+            self.log("")
         
         # 註冊定時任務
         schedule.every().day.at(RESTART_TIME).do(self.restart_webhook)
@@ -270,6 +307,10 @@ def main():
                         help='安裝必要的依賴套件')
     parser.add_argument('--restart-now', action='store_true',
                         help='立即執行一次重啟（不啟動定時器）')
+    parser.add_argument('--start-now', action='store_true', default=True,
+                        help='啟動時自動啟動 webhook 服務（預設啟用）')
+    parser.add_argument('--no-start', action='store_true',
+                        help='啟動時不自動啟動 webhook 服務')
     parser.add_argument('--host', default=WEBHOOK_HOST,
                         help=f'Webhook 監聽地址 (預設: {WEBHOOK_HOST})')
     parser.add_argument('--port', type=int, default=WEBHOOK_PORT,
@@ -296,9 +337,12 @@ def main():
         manager.cleanup()
         return
     
+    # 決定是否在啟動時啟動服務
+    start_service_now = not args.no_start
+    
     # 啟動定時調度器
     try:
-        manager.run_scheduler()
+        manager.run_scheduler(start_service_now=start_service_now)
     except Exception as e:
         manager.log(f"管理器運行時發生錯誤: {e}", "ERROR")
         import traceback
